@@ -1,10 +1,10 @@
 import axios from 'axios';
 
 class WhatsAppService {
-  constructor(phoneNumberId, accessToken) {
-    this.phoneNumberId = phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID;
-    this.accessToken = accessToken || process.env.WHATSAPP_ACCESS_TOKEN;
-    this.businessAccountId = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
+  constructor(phoneNumberId, accessToken, businessAccountId = null) {
+    this.phoneNumberId = phoneNumberId;
+    this.accessToken = accessToken;
+    this.businessAccountId = businessAccountId;
     this.apiUrl = process.env.WHATSAPP_API_URL || 'https://graph.facebook.com/v21.0';
     
     this.client = axios.create({

@@ -5,11 +5,18 @@ export const canalController = {
   async crearCanal(req, res) {
     try {
       const { empresaId } = req.params;
+
+      if (!empresaId || empresaId === 'undefined' || empresaId === 'null') {
+        return res.status(400).json({ success: false, error: 'empresaId es requerido' });
+      }
+
       const {
         nombre,
         phone_number_id,
         access_token,
-        business_account_id
+        business_account_id,
+        client_id,
+        client_secret,
       } = req.body;
 
       // Verificar límite de canales del plan
@@ -32,7 +39,7 @@ export const canalController = {
         }
       }
 
-      const whatsappService = new WhatsAppService(phone_number_id, access_token);
+      const whatsappService = new WhatsAppService(phone_number_id, access_token, business_account_id);
 
       try {
         await whatsappService.obtenerInfoTelefono();
@@ -44,13 +51,15 @@ export const canalController = {
         });
       }
 
+      const configJson = JSON.stringify({ client_id: client_id || null, client_secret: client_secret || null });
+
       const result = await query(
-        `INSERT INTO canales 
-         (empresa_id, nombre, tipo, phone_number_id, access_token, 
-          business_account_id, activo, created_at)
-         VALUES ($1, $2, 'whatsapp', $3, $4, $5, true, NOW())
+        `INSERT INTO canales
+         (empresa_id, nombre, tipo, phone_number_id, access_token,
+          business_account_id, config, activo, created_at)
+         VALUES ($1, $2, 'whatsapp', $3, $4, $5, $6::jsonb, true, NOW())
          RETURNING *`,
-        [empresaId, nombre, phone_number_id, access_token, business_account_id]
+        [empresaId, nombre, phone_number_id, access_token, business_account_id, configJson]
       );
 
       res.json({
@@ -72,6 +81,10 @@ export const canalController = {
   async listarCanales(req, res) {
     try {
       const { empresaId } = req.params;
+
+      if (!empresaId || empresaId === 'undefined' || empresaId === 'null') {
+        return res.status(400).json({ success: false, error: 'empresaId es requerido' });
+      }
 
       const result = await query(
         `SELECT * FROM canales 
@@ -98,17 +111,24 @@ export const canalController = {
   async actualizarCanal(req, res) {
     try {
       const { canalId } = req.params;
-      const { nombre, phone_number_id, access_token, business_account_id } = req.body;
+      const { nombre, phone_number_id, access_token, business_account_id, client_id, client_secret } = req.body;
+
+      const configPatch = JSON.stringify({
+        ...(client_id     !== undefined && { client_id:     client_id     || null }),
+        ...(client_secret !== undefined && { client_secret: client_secret || null }),
+      });
 
       const result = await query(
         `UPDATE canales
-         SET nombre = COALESCE($1, nombre),
-             phone_number_id = COALESCE($2, phone_number_id),
-             access_token = COALESCE($3, access_token),
-             business_account_id = COALESCE($4, business_account_id)
-         WHERE id = $5
+         SET nombre              = COALESCE($1, nombre),
+             phone_number_id     = COALESCE($2, phone_number_id),
+             access_token        = COALESCE($3, access_token),
+             business_account_id = COALESCE($4, business_account_id),
+             config              = COALESCE(config, '{}'::jsonb) || $5::jsonb,
+             updated_at          = NOW()
+         WHERE id = $6
          RETURNING *`,
-        [nombre, phone_number_id, access_token, business_account_id, canalId]
+        [nombre, phone_number_id, access_token, business_account_id, configPatch, canalId]
       );
 
       if (result.rows.length === 0) {
@@ -161,7 +181,8 @@ export const canalController = {
       const canal = result.rows[0];
       const whatsappService = new WhatsAppService(
         canal.phone_number_id,
-        canal.access_token
+        canal.access_token,
+        canal.business_account_id
       );
 
       const info = await whatsappService.obtenerInfoTelefono();

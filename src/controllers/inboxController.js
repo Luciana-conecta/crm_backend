@@ -7,7 +7,8 @@ export const inboxController = {
       const { empresaId } = req.params;
       const { estado, asignado_a, busqueda } = req.query;
 
-      if (req.user.empresa_id !== parseInt(empresaId)) {
+      // Solo validar si el JWT trae empresa_id (tokens viejos no lo traen)
+      if (req.user.empresa_id && parseInt(req.user.empresa_id) !== parseInt(empresaId)) {
         return res.status(403).json({ error: 'Acceso denegado' });
       }
 
@@ -131,7 +132,7 @@ export const inboxController = {
       }
 
       const conversacion = await query(
-        `SELECT c.*, cnt.numero_telefono, ch.phone_number_id, ch.access_token
+        `SELECT c.*, cnt.numero_telefono, ch.phone_number_id, ch.access_token, ch.business_account_id
          FROM conversaciones c
          LEFT JOIN contactos cnt ON c.contacto_id = cnt.id_contactos
          JOIN canales ch ON ch.empresa_id = c.empresa_id AND ch.tipo = 'whatsapp' AND ch.activo = true
@@ -146,9 +147,14 @@ export const inboxController = {
 
       const conv = conversacion.rows[0];
 
+      if (!conv.phone_number_id || !conv.access_token) {
+        return res.status(400).json({ error: 'No hay canal de WhatsApp activo configurado para esta empresa.' });
+      }
+
       const whatsapp = new WhatsAppService(
         conv.phone_number_id,
-        conv.access_token
+        conv.access_token,
+        conv.business_account_id
       );
 
       const response = await whatsapp.enviarMensajeTexto(

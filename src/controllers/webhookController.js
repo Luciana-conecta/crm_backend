@@ -184,7 +184,7 @@ const whatsappWebhookController = {
       console.log('='.repeat(60) + '\n');
 
       try {
-        const whatsapp = new WhatsAppService(canal.phone_number_id, canal.access_token);
+        const whatsapp = new WhatsAppService(canal.phone_number_id, canal.access_token, canal.business_account_id);
         await whatsapp.marcarComoLeido(mensaje.id);
       } catch (error) {
         console.log('⚠️ No se pudo marcar como leído:', error.message);
