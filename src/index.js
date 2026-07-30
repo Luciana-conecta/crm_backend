@@ -9,6 +9,7 @@ import whatsappRoutes from './routes/whatsapp.js';
 import billingRoutes from './routes/billing.js';
 import iaRoutes from './routes/ia.js';
 import socialRoutes from './routes/social.js';
+import { restaurarSesiones } from './service/baileysService.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -66,6 +67,7 @@ app.listen(PORT, () => {
   console.log(` Running on: http://localhost:${PORT}`);
   console.log(` Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(` Health check: http://localhost:${PORT}/health`);
+  restaurarSesiones();
 });
 process.on('SIGTERM', () => {
   process.exit(0);

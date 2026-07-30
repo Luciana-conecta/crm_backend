@@ -1,5 +1,6 @@
 import { query } from '../config/database.js';
 import WhatsAppService from '../service/whatsappService.js';
+import * as baileysService from '../service/baileysService.js';
 
 export const canalController = {
   async crearCanal(req, res) {
@@ -158,6 +159,76 @@ export const canalController = {
       res.json({ success: true, message: 'Canal eliminado exitosamente' });
     } catch (error) {
       console.error(' Error eliminando canal:', error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  },
+
+  async crearCanalQR(req, res) {
+    try {
+      const { empresaId } = req.params;
+      const { nombre } = req.body;
+
+      if (!empresaId || empresaId === 'undefined' || empresaId === 'null') {
+        return res.status(400).json({ success: false, error: 'empresaId es requerido' });
+      }
+
+      const planCheck = await query(
+        `SELECT p.max_canales, COUNT(c.id) as current_canales
+         FROM empresas e
+         JOIN planes p ON e.plan_id = p.id
+         LEFT JOIN canales c ON e.empresa_id = c.empresa_id
+         WHERE e.empresa_id = $1
+         GROUP BY p.max_canales`,
+        [empresaId]
+      );
+      if (planCheck.rows.length > 0) {
+        const { max_canales, current_canales } = planCheck.rows[0];
+        if (max_canales && parseInt(current_canales) >= parseInt(max_canales)) {
+          return res.status(403).json({
+            success: false,
+            error: `Tu plan permite máximo ${max_canales} canal(es). Actualiza tu plan para agregar más.`
+          });
+        }
+      }
+
+      const result = await query(
+        `INSERT INTO canales (empresa_id, nombre, tipo, metodo_conexion, qr_status, activo, created_at)
+         VALUES ($1, $2, 'whatsapp', 'qr', 'connecting', false, NOW())
+         RETURNING *`,
+        [empresaId, nombre || 'WhatsApp (QR)']
+      );
+
+      const canal = result.rows[0];
+      baileysService.iniciarSesion(canal.id, empresaId).catch((err) =>
+        console.error('Error iniciando sesión QR:', err.message)
+      );
+
+      res.json({ success: true, canal });
+    } catch (error) {
+      console.error('Error creando canal QR:', error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  },
+
+  async estadoCanalQR(req, res) {
+    try {
+      const { canalId } = req.params;
+      const estado = await baileysService.obtenerEstado(canalId);
+      res.json({ success: true, ...estado });
+    } catch (error) {
+      console.error('Error obteniendo estado QR:', error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  },
+
+  async desconectarCanalQR(req, res) {
+    try {
+      const { canalId } = req.params;
+      await baileysService.cerrarSesion(canalId);
+      await query('DELETE FROM canales WHERE id = $1', [canalId]);
+      res.json({ success: true, message: 'Canal QR desconectado' });
+    } catch (error) {
+      console.error('Error desconectando canal QR:', error);
       res.status(500).json({ success: false, error: error.message });
     }
   },

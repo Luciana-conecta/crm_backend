@@ -111,7 +111,7 @@ const whatsappWebhookController = {
       const contactoId = contacto.rows[0].id_contactos;
       let conversacion = await query(
         `SELECT * FROM conversaciones
-         WHERE empresa_id = $1 AND contacto_id = $2 AND estado = 'abierta'
+         WHERE empresa_id = $1 AND contacto_id = $2 AND estado IN ('abierta', 'sin_respuesta')
          ORDER BY creado_en DESC LIMIT 1`,
         [canal.empresa_id, contactoId]
       );
@@ -126,8 +126,9 @@ const whatsappWebhookController = {
         );
         console.log('✅ Conversación creada:', conversacion.rows[0].conversaciones_id);
       } else {
+        // Un mensaje nuevo del cliente reactiva una conversación "enfriada"
         await query(
-          'UPDATE conversaciones SET ultimo_mensaje_en = NOW() WHERE conversaciones_id = $1',
+          "UPDATE conversaciones SET ultimo_mensaje_en = NOW(), estado = 'abierta' WHERE conversaciones_id = $1",
           [conversacion.rows[0].conversaciones_id]
         );
         console.log('✅ Conversación actualizada:', conversacion.rows[0].conversaciones_id);

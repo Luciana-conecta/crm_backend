@@ -1,5 +1,27 @@
 import { query } from '../config/database.js';
 import WhatsAppService from '../service/whatsappService.js';
+import * as baileysService from '../service/baileysService.js';
+
+// Si respondimos (saliente) y el cliente no volvió a escribir en este lapso,
+// la conversación pasa de "abierta" a "sin_respuesta" (se persiste, no es solo de pantalla,
+// para que el pipeline se pueda editar a mano arrastrando/moviendo tarjetas).
+const HORAS_SIN_RESPUESTA = 24;
+
+async function promoverConversacionesFrias(empresaId) {
+  await query(
+    `UPDATE conversaciones c
+     SET estado = 'sin_respuesta'
+     WHERE c.empresa_id = $1
+       AND c.estado = 'abierta'
+       AND c.ultimo_mensaje_en < NOW() - INTERVAL '${HORAS_SIN_RESPUESTA} hours'
+       AND (
+         SELECT direccion FROM mensajes
+         WHERE conversacion_id = c.conversaciones_id
+         ORDER BY fecha_hora DESC LIMIT 1
+       ) = 'saliente'`,
+    [empresaId]
+  );
+}
 
 export const inboxController = {
   async obtenerConversaciones(req, res) {
@@ -11,6 +33,10 @@ export const inboxController = {
       if (req.user.empresa_id && parseInt(req.user.empresa_id) !== parseInt(empresaId)) {
         return res.status(403).json({ error: 'Acceso denegado' });
       }
+
+      await promoverConversacionesFrias(empresaId).catch((err) =>
+        console.error('Error promoviendo conversaciones frías:', err.message)
+      );
 
       let sql = `
         SELECT
@@ -34,7 +60,14 @@ export const inboxController = {
             WHERE conversacion_id = c.conversaciones_id
               AND direccion = 'entrante'
               AND estado != 'read'
-          )::integer as mensajes_no_leidos
+          )::integer as mensajes_no_leidos,
+          (
+            SELECT direccion
+            FROM mensajes
+            WHERE conversacion_id = c.conversaciones_id
+            ORDER BY fecha_hora DESC
+            LIMIT 1
+          ) as ultima_direccion
         FROM conversaciones c
         LEFT JOIN contactos cnt ON c.contacto_id = cnt.id_contactos
         WHERE c.empresa_id = $1
@@ -67,10 +100,14 @@ export const inboxController = {
       sql += ' ORDER BY c.ultimo_mensaje_en DESC';
 
       const result = await query(sql, params);
+      const conversaciones = result.rows.map((conv) => ({
+        ...conv,
+        pipeline_status: conv.estado,
+      }));
 
       res.json({
-        conversaciones: result.rows,
-        total: result.rows.length
+        conversaciones,
+        total: conversaciones.length
       });
 
     } catch (error) {
@@ -132,7 +169,8 @@ export const inboxController = {
       }
 
       const conversacion = await query(
-        `SELECT c.*, cnt.numero_telefono, ch.phone_number_id, ch.access_token, ch.business_account_id
+        `SELECT c.*, cnt.numero_telefono, ch.id as canal_id, ch.metodo_conexion,
+                ch.phone_number_id, ch.access_token, ch.business_account_id
          FROM conversaciones c
          LEFT JOIN contactos cnt ON c.contacto_id = cnt.id_contactos
          JOIN canales ch ON ch.empresa_id = c.empresa_id AND ch.tipo = 'whatsapp' AND ch.activo = true
@@ -146,29 +184,35 @@ export const inboxController = {
       }
 
       const conv = conversacion.rows[0];
+      let whatsappMessageId;
 
-      if (!conv.phone_number_id || !conv.access_token) {
-        return res.status(400).json({ error: 'No hay canal de WhatsApp activo configurado para esta empresa.' });
+      if (conv.metodo_conexion === 'qr') {
+        const result = await baileysService.enviarMensaje(conv.canal_id, conv.numero_telefono, contenido);
+        whatsappMessageId = result?.key?.id || `qr_${Date.now()}`;
+      } else {
+        if (!conv.phone_number_id || !conv.access_token) {
+          return res.status(400).json({ error: 'No hay canal de WhatsApp activo configurado para esta empresa.' });
+        }
+
+        const whatsapp = new WhatsAppService(
+          conv.phone_number_id,
+          conv.access_token,
+          conv.business_account_id
+        );
+
+        const response = await whatsapp.enviarMensajeTexto(
+          conv.numero_telefono,
+          contenido
+        );
+        whatsappMessageId = response.messages[0].id;
       }
-
-      const whatsapp = new WhatsAppService(
-        conv.phone_number_id,
-        conv.access_token,
-        conv.business_account_id
-      );
-
-      const response = await whatsapp.enviarMensajeTexto(
-        conv.numero_telefono,
-        contenido
-      );
-
 
       const nuevoMensaje = await query(
         `INSERT INTO mensajes
          (conversacion_id, empresa_id, plataforma_mensaje_id, direccion, contenido, tipo, estado, fecha_hora, creado_en)
          VALUES ($1, $2, $3, 'saliente', $4, $5, 'sent', NOW(), NOW())
          RETURNING *`,
-        [conversacionId, empresaId, response.messages[0].id, contenido, tipo]
+        [conversacionId, empresaId, whatsappMessageId, contenido, tipo]
       );
 
       await query(
@@ -181,7 +225,7 @@ export const inboxController = {
       res.json({
         success: true,
         mensaje: nuevoMensaje.rows[0],
-        whatsapp_message_id: response.messages[0].id
+        whatsapp_message_id: whatsappMessageId
       });
 
     } catch (error) {

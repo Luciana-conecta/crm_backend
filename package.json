@@ -20,6 +20,8 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",
     "@getbrevo/brevo": "^5.0.1",
+    "@hapi/boom": "^10.0.1",
+    "@whiskeysockets/baileys": "^7.0.0-rc13",
     "axios": "^1.13.5",
     "bcrypt": "^5.1.1",
     "cors": "^2.8.5",
@@ -32,6 +34,8 @@
     "nodemailer": "^8.0.3",
     "openai": "^6.32.0",
     "pg": "^8.11.3",
+    "pino": "^10.3.1",
+    "qrcode": "^1.5.4",
     "resend": "^6.9.2"
   },
   "devDependencies": {

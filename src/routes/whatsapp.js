@@ -24,4 +24,9 @@ router.put('/canales/:canalId', authenticateToken, canalController.actualizarCan
 router.delete('/canales/:canalId', authenticateToken, canalController.eliminarCanal);
 router.post('/canales/:canalId/probar', authenticateToken, canalController.probarCanal);
 
+// Canal WhatsApp vía QR (Baileys)
+router.post('/empresas/:empresaId/canales/qr', authenticateToken, canalController.crearCanalQR);
+router.get('/canales/:canalId/qr-estado', authenticateToken, canalController.estadoCanalQR);
+router.post('/canales/:canalId/qr-desconectar', authenticateToken, canalController.desconectarCanalQR);
+
 export default router;

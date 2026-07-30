@@ -32,3 +32,6 @@ coverage/
 # Build
 dist/
 build/
+
+# Sesiones de WhatsApp (Baileys) — credenciales de sesión, no deben subirse
+whatsapp_sessions/
