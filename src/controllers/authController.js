@@ -164,12 +164,28 @@ const refreshToken = async (req, res) => {
     const user = result.rows[0];
     const frontendRole = ROLE_MAPPING[user.tipo_usuario] || 'client';
 
+    // El token renovado debe llevar empresa_id igual que el de login,
+    // si no el usuario pierde acceso a su inbox al refrescar.
+    let empresaId = null;
+    if (user.tipo_usuario !== 'super_admin') {
+      const empresasResult = await query(
+        `SELECT ue.id_empresa
+         FROM usuario_empresa ue
+         WHERE ue.id_usuario = $1 AND ue.estado = 'activo'
+         ORDER BY ue.es_principal DESC
+         LIMIT 1`,
+        [user.usuarios_id]
+      );
+      empresaId = empresasResult.rows[0]?.id_empresa ?? null;
+    }
+
     const accessToken = jwt.sign(
-      { 
-        id: user.usuarios_id, 
-        email: user.email, 
+      {
+        id: user.usuarios_id,
+        email: user.email,
         tipo_usuario: user.tipo_usuario,
-        role: frontendRole
+        role: frontendRole,
+        empresa_id: empresaId
       },
       JWT_SECRET,
       { expiresIn: JWT_EXPIRES_IN }

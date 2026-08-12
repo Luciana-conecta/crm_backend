@@ -1,11 +1,20 @@
 import { query } from '../config/database.js';
 import WhatsAppService from '../service/whatsappService.js';
 import * as baileysService from '../service/baileysService.js';
+import { notificarNuevoMensaje } from '../service/websocketService.js';
 
 // Si respondimos (saliente) y el cliente no volvió a escribir en este lapso,
 // la conversación pasa de "abierta" a "sin_respuesta" (se persiste, no es solo de pantalla,
 // para que el pipeline se pueda editar a mano arrastrando/moviendo tarjetas).
 const HORAS_SIN_RESPUESTA = 24;
+
+// El token de super_admin no lleva empresa_id (ver authController.login), así que
+// filtrar por req.user.empresa_id dejaba 404 toda conversación abierta desde el panel admin.
+// null = sin restricción de empresa; -1 = token sin empresa_id (no coincide con ninguna).
+function empresaDelToken(req) {
+  if (req.user.tipo_usuario === 'super_admin') return null;
+  return req.user.empresa_id ?? -1;
+}
 
 async function promoverConversacionesFrias(empresaId) {
   await query(
@@ -118,11 +127,12 @@ export const inboxController = {
   async obtenerMensajes(req, res) {
     try {
       const { conversacionId } = req.params;
-      const empresaId = req.user.empresa_id;
+      const empresaId = empresaDelToken(req);
 
       const conversacion = await query(
         `SELECT * FROM conversaciones
-         WHERE conversaciones_id = $1 AND empresa_id = $2`,
+         WHERE conversaciones_id = $1
+           AND ($2::int IS NULL OR empresa_id = $2)`,
         [conversacionId, empresaId]
       );
 
@@ -162,7 +172,7 @@ export const inboxController = {
   async enviarMensaje(req, res) {
     try {
       const { conversacionId, contenido, tipo = 'text' } = req.body;
-      const empresaId = req.user.empresa_id;
+      const empresaId = empresaDelToken(req);
 
       if (!conversacionId || !contenido) {
         return res.status(400).json({ error: 'Faltan datos requeridos' });
@@ -174,7 +184,8 @@ export const inboxController = {
          FROM conversaciones c
          LEFT JOIN contactos cnt ON c.contacto_id = cnt.id_contactos
          JOIN canales ch ON ch.empresa_id = c.empresa_id AND ch.tipo = 'whatsapp' AND ch.activo = true
-         WHERE c.conversaciones_id = $1 AND c.empresa_id = $2
+         WHERE c.conversaciones_id = $1
+           AND ($2::int IS NULL OR c.empresa_id = $2)
          LIMIT 1`,
         [conversacionId, empresaId]
       );
@@ -212,7 +223,7 @@ export const inboxController = {
          (conversacion_id, empresa_id, plataforma_mensaje_id, direccion, contenido, tipo, estado, fecha_hora, creado_en)
          VALUES ($1, $2, $3, 'saliente', $4, $5, 'sent', NOW(), NOW())
          RETURNING *`,
-        [conversacionId, empresaId, whatsappMessageId, contenido, tipo]
+        [conversacionId, conv.empresa_id, whatsappMessageId, contenido, tipo]
       );
 
       await query(
@@ -221,6 +232,22 @@ export const inboxController = {
          WHERE conversaciones_id = $1`,
         [conversacionId]
       );
+
+      notificarNuevoMensaje(conv.empresa_id, {
+        conversacionId,
+        mensaje: {
+          id: nuevoMensaje.rows[0].mensaje_id,
+          conversacion_id: nuevoMensaje.rows[0].conversacion_id,
+          plataforma_mensaje_id: nuevoMensaje.rows[0].plataforma_mensaje_id,
+          direccion: nuevoMensaje.rows[0].direccion,
+          contenido: nuevoMensaje.rows[0].contenido,
+          tipo: nuevoMensaje.rows[0].tipo,
+          media_url: nuevoMensaje.rows[0].media_url,
+          estado: nuevoMensaje.rows[0].estado,
+          timestamp: nuevoMensaje.rows[0].fecha_hora,
+          creado_en: nuevoMensaje.rows[0].creado_en,
+        },
+      });
 
       res.json({
         success: true,
@@ -241,7 +268,7 @@ export const inboxController = {
     try {
       const { conversacionId } = req.params;
       const { estado } = req.body;
-      const empresaId = req.user.empresa_id;
+      const empresaId = empresaDelToken(req);
 
       if (!estado) {
         return res.status(400).json({ error: 'Estado requerido' });
@@ -249,7 +276,8 @@ export const inboxController = {
 
       const check = await query(
         `SELECT conversaciones_id FROM conversaciones
-         WHERE conversaciones_id = $1 AND empresa_id = $2`,
+         WHERE conversaciones_id = $1
+           AND ($2::int IS NULL OR empresa_id = $2)`,
         [conversacionId, empresaId]
       );
 
@@ -279,11 +307,12 @@ export const inboxController = {
   async marcarComoLeido(req, res) {
     try {
       const { conversacionId } = req.params;
-      const empresaId = req.user.empresa_id;
+      const empresaId = empresaDelToken(req);
 
       const check = await query(
         `SELECT conversaciones_id FROM conversaciones
-         WHERE conversaciones_id = $1 AND empresa_id = $2`,
+         WHERE conversaciones_id = $1
+           AND ($2::int IS NULL OR empresa_id = $2)`,
         [conversacionId, empresaId]
       );
 

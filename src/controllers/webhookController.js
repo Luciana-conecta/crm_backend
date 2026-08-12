@@ -1,5 +1,6 @@
 import { query } from '../config/database.js';
 import WhatsAppService from '../service/whatsappService.js';
+import { notificarNuevoMensaje } from '../service/websocketService.js';
 
 const whatsappWebhookController = {
   verificarWebhook(req, res) {
@@ -183,6 +184,22 @@ const whatsappWebhookController = {
       console.log('✅ Mensaje guardado:', nuevoMensaje.rows[0].mensaje_id);
       console.log('📝 Contenido:', contenido);
       console.log('='.repeat(60) + '\n');
+
+      notificarNuevoMensaje(canal.empresa_id, {
+        conversacionId,
+        mensaje: {
+          id: nuevoMensaje.rows[0].mensaje_id,
+          conversacion_id: nuevoMensaje.rows[0].conversacion_id,
+          plataforma_mensaje_id: nuevoMensaje.rows[0].plataforma_mensaje_id,
+          direccion: nuevoMensaje.rows[0].direccion,
+          contenido: nuevoMensaje.rows[0].contenido,
+          tipo: nuevoMensaje.rows[0].tipo,
+          media_url: nuevoMensaje.rows[0].media_url,
+          estado: nuevoMensaje.rows[0].estado,
+          timestamp: nuevoMensaje.rows[0].fecha_hora,
+          creado_en: nuevoMensaje.rows[0].creado_en,
+        },
+      });
 
       try {
         const whatsapp = new WhatsAppService(canal.phone_number_id, canal.access_token, canal.business_account_id);

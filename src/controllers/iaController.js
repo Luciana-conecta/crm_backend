@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { query, getClient } from '../config/database.js';
+import { notificarEscalamiento } from '../service/websocketService.js';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -39,13 +40,15 @@ const buildSystemPrompt = ({ config, productos, faqs, reglas, empresa }) => {
 
   if (productos.length > 0) {
     prompt += `## PRODUCTOS Y SERVICIOS\n`;
-    productos.forEach((p) => {
-      prompt += `- **${p.nombre}**`;
+    productos.forEach((p, i) => {
+      prompt += `${i + 1}. **${p.nombre}**`;
       if (p.precio) prompt += ` — ${p.precio}`;
-      if (p.descripcion) prompt += `\n  ${p.descripcion}`;
+      if (p.descripcion) prompt += `\n   ${p.descripcion}`;
       prompt += '\n';
     });
-    prompt += '\n';
+    prompt += `\nIMPORTANTE: puede haber más de un producto con nombres muy parecidos que en realidad son variantes distintas (distinta sede, sucursal, horario o modalidad). Antes de responder, revisá la lista COMPLETA de arriba:\n`;
+    prompt += `- Si el usuario menciona una sede/ubicación específica, respondé únicamente con los datos del producto cuyo nombre coincide con esa sede.\n`;
+    prompt += `- Si el usuario pregunta de forma general y existen varias variantes del mismo producto, mencioná TODAS las opciones que coincidan (no elijas una sola arbitrariamente) y pedí que precise cuál le interesa si es necesario.\n\n`;
   }
 
   if (faqs.length > 0) {
@@ -242,5 +245,11 @@ export const transferirHumano = async (req, res) => {
   }
 
   console.log(`[IA] Conversación ${conversacionId} transferida a humano`);
+
+  notificarEscalamiento(empresaId, {
+    conversacionId: result.rows[0].conversaciones_id,
+    estado: result.rows[0].estado,
+  });
+
   res.json({ success: true, data: result.rows[0] });
 };

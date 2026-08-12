@@ -9,6 +9,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import QRCode from 'qrcode';
 import { query } from '../config/database.js';
+import { notificarNuevoMensaje } from './websocketService.js';
 
 const AUTH_BASE = path.resolve(process.cwd(), 'whatsapp_sessions');
 const logger = pino({ level: 'silent' });
@@ -190,10 +191,11 @@ async function procesarMensajeEntrante(canalId, empresaId, msg) {
 
   const conversacionId = conversacion.rows[0].conversaciones_id;
 
-  await query(
+  const nuevoMensaje = await query(
     `INSERT INTO mensajes
      (conversacion_id, empresa_id, plataforma_mensaje_id, direccion, contenido, tipo, estado, fecha_hora, creado_en)
-     VALUES ($1, $2, $3, 'entrante', $4, 'text', 'recibido', $5, NOW())`,
+     VALUES ($1, $2, $3, 'entrante', $4, 'text', 'recibido', $5, NOW())
+     RETURNING *`,
     [
       conversacionId,
       empresaId,
@@ -202,6 +204,22 @@ async function procesarMensajeEntrante(canalId, empresaId, msg) {
       new Date((Number(msg.messageTimestamp) || Math.floor(Date.now() / 1000)) * 1000),
     ]
   );
+
+  notificarNuevoMensaje(empresaId, {
+    conversacionId,
+    mensaje: {
+      id: nuevoMensaje.rows[0].mensaje_id,
+      conversacion_id: nuevoMensaje.rows[0].conversacion_id,
+      plataforma_mensaje_id: nuevoMensaje.rows[0].plataforma_mensaje_id,
+      direccion: nuevoMensaje.rows[0].direccion,
+      contenido: nuevoMensaje.rows[0].contenido,
+      tipo: nuevoMensaje.rows[0].tipo,
+      media_url: nuevoMensaje.rows[0].media_url,
+      estado: nuevoMensaje.rows[0].estado,
+      timestamp: nuevoMensaje.rows[0].fecha_hora,
+      creado_en: nuevoMensaje.rows[0].creado_en,
+    },
+  });
 }
 
 export async function obtenerEstado(canalIdRaw) {

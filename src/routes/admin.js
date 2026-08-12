@@ -7,6 +7,12 @@ import suscripcionController from '../controllers/suscripcionController.js';
 
 const router = express.Router();
 
+router.get('/stats',
+  authenticateToken,
+  authorize('super_admin'),
+  asyncHandler(adminController.getStats)
+);
+
 router.get('/empresas',
   authenticateToken,
   authorize('super_admin'),

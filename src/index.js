@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import http from 'http';
 import express from 'express';
 import cors from 'cors';
 
@@ -10,8 +11,10 @@ import billingRoutes from './routes/billing.js';
 import iaRoutes from './routes/ia.js';
 import socialRoutes from './routes/social.js';
 import { restaurarSesiones } from './service/baileysService.js';
+import { inicializarWebSocket } from './service/websocketService.js';
 
 const app = express();
+const server = http.createServer(app);
 const PORT = process.env.PORT || 3001;
 
 
@@ -63,7 +66,9 @@ app.use((err, req, res, next) => {
     ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
   });
 });
-app.listen(PORT, () => {
+inicializarWebSocket(server);
+
+server.listen(PORT, () => {
   console.log(` Running on: http://localhost:${PORT}`);
   console.log(` Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(` Health check: http://localhost:${PORT}/health`);

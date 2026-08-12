@@ -56,7 +56,7 @@ export function notificarNuevoMensaje(empresaId, data) {
 
 export function notificarActualizacionMensaje(empresaId, data) {
   const clientesEmpresa = clientes.get(empresaId.toString());
-  
+
   if (clientesEmpresa) {
     const mensaje = JSON.stringify({
       tipo: 'actualizacion_mensaje',
@@ -68,5 +68,24 @@ export function notificarActualizacionMensaje(empresaId, data) {
         cliente.send(mensaje);
       }
     });
+  }
+}
+
+export function notificarEscalamiento(empresaId, data) {
+  const clientesEmpresa = clientes.get(empresaId.toString());
+
+  if (clientesEmpresa) {
+    const mensaje = JSON.stringify({
+      tipo: 'escalado_a_humano',
+      ...data
+    });
+
+    clientesEmpresa.forEach((cliente) => {
+      if (cliente.readyState === 1) {
+        cliente.send(mensaje);
+      }
+    });
+
+    console.log(`📤 Notificación de escalamiento enviada a ${clientesEmpresa.size} clientes`);
   }
 }
