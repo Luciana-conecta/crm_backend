@@ -224,11 +224,16 @@ async function procesarMensajeEntrante(canalId, empresaId, msg) {
 
 export async function obtenerEstado(canalIdRaw) {
   const canalId = String(canalIdRaw);
-  const sesion = sesiones.get(canalId);
+  let sesion = sesiones.get(canalId);
   if (!sesion) {
-    const canal = await query('SELECT qr_status, qr_phone FROM canales WHERE id = $1', [canalId]);
+    const canal = await query('SELECT empresa_id, qr_status, qr_phone FROM canales WHERE id = $1', [canalId]);
     const row = canal.rows[0];
-    return { status: row?.qr_status || 'disconnected', phone: row?.qr_phone || null };
+    if (!row) return { status: 'disconnected', phone: null };
+
+    // No hay sesión en memoria (server recién reiniciado, o se cayó la conexión):
+    // reintentar para poder generar un QR nuevo en vez de quedar "disconnected" para siempre.
+    sesion = await iniciarSesion(canalId, row.empresa_id).catch(() => null);
+    if (!sesion) return { status: row.qr_status || 'disconnected', phone: row.qr_phone || null };
   }
 
   if (sesion.status === 'qr' && sesion.qrString) {
