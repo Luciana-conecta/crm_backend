@@ -4,7 +4,7 @@ import  {inboxController } from '../controllers/inboxController.js';
 import  { canalController } from '../controllers/canalController.js';
 import  {authenticateToken  }  from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
-import { transferirHumano } from '../controllers/iaController.js';
+import { transferirHumano, reactivarIA } from '../controllers/iaController.js';
 
 
 const router = express.Router();
@@ -16,6 +16,7 @@ router.post('/conversaciones/enviar', authenticateToken, inboxController.enviarM
 router.patch('/conversaciones/:conversacionId', authenticateToken, inboxController.actualizarEstado);
 router.post('/conversaciones/:conversacionId/marcar-leido', authenticateToken, inboxController.marcarComoLeido);
 router.post('/conversaciones/:conversacionId/transferir-humano', authenticateToken, asyncHandler(transferirHumano));
+router.post('/conversaciones/:conversacionId/reactivar-ia', authenticateToken, asyncHandler(reactivarIA));
 
 // Canales WhatsApp
 router.get('/empresas/:empresaId/canales', authenticateToken, canalController.listarCanales);

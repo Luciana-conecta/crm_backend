@@ -54,6 +54,7 @@ export const inboxController = {
           c.estado,
           c.ultimo_mensaje_en,
           c.asignado_a,
+          c.asignado_a_humano,
           cnt.nombre as contacto_nombre,
           cnt.foto_perfil_url as foto_perfil,
           (
@@ -228,7 +229,8 @@ export const inboxController = {
 
       await query(
         `UPDATE conversaciones
-         SET ultimo_mensaje_en = NOW()
+         SET ultimo_mensaje_en = NOW(),
+             asignado_a_humano = true
          WHERE conversaciones_id = $1`,
         [conversacionId]
       );

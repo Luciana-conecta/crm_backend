@@ -1,91 +1,6 @@
-import OpenAI from 'openai';
 import { query, getClient } from '../config/database.js';
 import { notificarEscalamiento } from '../service/websocketService.js';
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-// ─── Helper: cargar contexto completo de la empresa ──────────────────────────
-
-const cargarContexto = async (empresaId) => {
-  const [configRes, productosRes, faqsRes, reglasRes, empresaRes] = await Promise.all([
-    query('SELECT * FROM ia_config WHERE empresa_id = $1', [empresaId]),
-    query('SELECT * FROM ia_productos WHERE empresa_id = $1 ORDER BY orden ASC', [empresaId]),
-    query('SELECT * FROM ia_faqs WHERE empresa_id = $1 ORDER BY orden ASC', [empresaId]),
-    query('SELECT * FROM ia_reglas_escalamiento WHERE empresa_id = $1', [empresaId]),
-    query('SELECT nombre FROM empresas WHERE empresa_id = $1', [empresaId]),
-  ]);
-
-  return {
-    config: configRes.rows[0] || null,
-    productos: productosRes.rows,
-    faqs: faqsRes.rows,
-    reglas: reglasRes.rows,
-    empresa: empresaRes.rows[0] || null,
-  };
-};
-
-// ─── Helper: construir system prompt ─────────────────────────────────────────
-
-const buildSystemPrompt = ({ config, productos, faqs, reglas, empresa }) => {
-  const nombre = empresa?.nombre || 'la empresa';
-  const tono = config?.tono || 'profesional';
-  const industria = config?.industria ? `del sector ${config.industria}` : '';
-  const descripcion = config?.descripcion_negocio || '';
-
-  let prompt = `Eres el asistente virtual de ${nombre}${industria ? ` ${industria}` : ''}`;
-  if (descripcion) prompt += `, ${descripcion}`;
-  prompt += `.\n\nTu tono de comunicación es: ${tono}.\n`;
-  prompt += `Siempre responde en español, de forma concisa y útil.\n`;
-  prompt += `No inventes información que no esté en el contexto proporcionado.\n\n`;
-
-  if (productos.length > 0) {
-    prompt += `## PRODUCTOS Y SERVICIOS\n`;
-    productos.forEach((p, i) => {
-      prompt += `${i + 1}. **${p.nombre}**`;
-      if (p.precio) prompt += ` — ${p.precio}`;
-      if (p.descripcion) prompt += `\n   ${p.descripcion}`;
-      prompt += '\n';
-    });
-    prompt += `\nIMPORTANTE: puede haber más de un producto con nombres muy parecidos que en realidad son variantes distintas (distinta sede, sucursal, horario o modalidad). Antes de responder, revisá la lista COMPLETA de arriba:\n`;
-    prompt += `- Si el usuario menciona una sede/ubicación específica, respondé únicamente con los datos del producto cuyo nombre coincide con esa sede.\n`;
-    prompt += `- Si el usuario pregunta de forma general y existen varias variantes del mismo producto, mencioná TODAS las opciones que coincidan (no elijas una sola arbitrariamente) y pedí que precise cuál le interesa si es necesario.\n\n`;
-  }
-
-  if (faqs.length > 0) {
-    prompt += `## PREGUNTAS FRECUENTES\n`;
-    faqs.forEach((f) => {
-      prompt += `**${f.pregunta}**\n${f.respuesta}\n\n`;
-    });
-  }
-
-  if (reglas.length > 0) {
-    prompt += `## CUÁNDO DERIVAR A UN HUMANO\n`;
-    reglas.forEach((r) => {
-      prompt += `- Si detectas: ${r.condicion}${r.descripcion ? ` — ${r.descripcion}` : ''}\n`;
-    });
-    prompt += '\n';
-  }
-
-  if (config?.instrucciones_adicionales) {
-    prompt += `## INSTRUCCIONES ESPECIALES\n${config.instrucciones_adicionales}\n\n`;
-  }
-
-  prompt += `## CLASIFICACIÓN DE INTENCIÓN
-Al final de cada respuesta, en una línea separada escribe exactamente:
-INTENCION: [tipo]
-
-Tipos posibles:
-- saludo
-- despedida
-- consulta_general
-- consulta_precio
-- intencion_compra
-- queja
-- solicitud_humano
-- otro`;
-
-  return prompt;
-};
+import { cargarContexto, generarRespuestaIA } from '../service/iaService.js';
 
 // ─── GET /api/ia/empresa/:id/config ──────────────────────────────────────────
 
@@ -176,53 +91,21 @@ export const saveConfig = async (req, res) => {
 
 export const sugerir = async (req, res) => {
   const { id } = req.params;
-  const { mensajes = [], conversacionId } = req.body;
+  const { mensajes = [] } = req.body;
 
   if (mensajes.length === 0) {
     return res.status(400).json({ success: false, error: 'Se requiere al menos un mensaje' });
   }
 
-  const contexto = await cargarContexto(id);
+  const resultado = await generarRespuestaIA(id, mensajes);
 
-  if (contexto.config?.activo === false) {
+  if (resultado === null) {
     return res.status(403).json({ success: false, error: 'El asistente IA está desactivado. Actívalo en la configuración.' });
   }
 
-  const systemPrompt = buildSystemPrompt(contexto);
+  console.log(`[IA] Sugerencia para empresa ${id} | intención: ${resultado.intencion}`);
 
-  // Tomar los últimos 10 mensajes y convertir al formato de Anthropic
-  const ultimosMensajes = mensajes.slice(-10).map((m) => ({
-    role: m.rol === 'usuario' ? 'user' : 'assistant',
-    content: m.contenido,
-  }));
-
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
-    max_tokens: 500,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      ...ultimosMensajes,
-    ],
-  });
-
-  const textoCompleto = response.choices[0].message.content;
-
-  // Extraer intención de la última línea
-  const lineas = textoCompleto.trim().split('\n');
-  const lineaIntencion = lineas.findLast((l) => l.startsWith('INTENCION:'));
-  const intencion = lineaIntencion
-    ? lineaIntencion.replace('INTENCION:', '').trim().toLowerCase()
-    : 'otro';
-
-  // Quitar la línea INTENCION del texto de la sugerencia
-  const sugerencia = lineas
-    .filter((l) => !l.startsWith('INTENCION:'))
-    .join('\n')
-    .trim();
-
-  console.log(`[IA] Sugerencia para empresa ${id} | intención: ${intencion}`);
-
-  res.json({ success: true, data: { sugerencia, intencion } });
+  res.json({ success: true, data: resultado });
 };
 
 // ─── POST /whatsapp/conversaciones/:id/transferir-humano ─────────────────────
@@ -245,6 +128,35 @@ export const transferirHumano = async (req, res) => {
   }
 
   console.log(`[IA] Conversación ${conversacionId} transferida a humano`);
+
+  notificarEscalamiento(empresaId, {
+    conversacionId: result.rows[0].conversaciones_id,
+    estado: result.rows[0].estado,
+  });
+
+  res.json({ success: true, data: result.rows[0] });
+};
+
+// ─── POST /whatsapp/conversaciones/:id/reactivar-ia ───────────────────────────
+
+export const reactivarIA = async (req, res) => {
+  const { conversacionId } = req.params;
+  const empresaId = req.user.empresa_id;
+
+  const result = await query(
+    `UPDATE conversaciones
+     SET asignado_a_humano = false,
+         actualizado_en    = NOW()
+     WHERE conversaciones_id = $1 AND empresa_id = $2
+     RETURNING conversaciones_id, asignado_a_humano, estado`,
+    [conversacionId, empresaId]
+  );
+
+  if (result.rows.length === 0) {
+    return res.status(404).json({ success: false, error: 'Conversación no encontrada' });
+  }
+
+  console.log(`[IA] Conversación ${conversacionId} reactivada para IA`);
 
   notificarEscalamiento(empresaId, {
     conversacionId: result.rows[0].conversaciones_id,

@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import QRCode from 'qrcode';
 import { query } from '../config/database.js';
 import { notificarNuevoMensaje } from './websocketService.js';
+import { generarRespuestaIA } from './iaService.js';
 
 const AUTH_BASE = path.resolve(process.cwd(), 'whatsapp_sessions');
 const logger = pino({ level: 'silent' });
@@ -115,8 +116,8 @@ export async function iniciarSesion(canalIdRaw, empresaId) {
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
     for (const msg of messages) {
-      await procesarMensajeEntrante(canalId, empresaId, msg).catch((err) =>
-        console.error('[baileys] error procesando mensaje entrante:', err.message)
+      await procesarMensaje(canalId, empresaId, msg).catch((err) =>
+        console.error('[baileys] error procesando mensaje:', err.message)
       );
     }
   });
@@ -124,10 +125,21 @@ export async function iniciarSesion(canalIdRaw, empresaId) {
   return sesion;
 }
 
-async function procesarMensajeEntrante(canalId, empresaId, msg) {
-  if (msg.key.fromMe) return;
+async function procesarMensaje(canalId, empresaId, msg) {
   const jid = msg.key.remoteJid ?? '';
   if (!jid || jid.endsWith('@g.us') || jid === 'status@broadcast') return;
+
+  // fromMe: el agente respondió desde el teléfono vinculado (no desde el CRM).
+  // Si ya viene del flujo del CRM (inboxController.enviarMensaje), esa fila ya
+  // existe con este mismo plataforma_mensaje_id: evitar duplicarla.
+  const esSaliente = Boolean(msg.key.fromMe);
+  if (esSaliente) {
+    const existente = await query(
+      'SELECT 1 FROM mensajes WHERE plataforma_mensaje_id = $1 AND empresa_id = $2',
+      [msg.key.id, empresaId]
+    );
+    if (existente.rows.length > 0) return;
+  }
 
   // Los contactos con privacidad activada llegan como @lid (identificador vinculado)
   // en vez del número real. Hay que conservar el JID completo para poder responderles;
@@ -194,15 +206,74 @@ async function procesarMensajeEntrante(canalId, empresaId, msg) {
   const nuevoMensaje = await query(
     `INSERT INTO mensajes
      (conversacion_id, empresa_id, plataforma_mensaje_id, direccion, contenido, tipo, estado, fecha_hora, creado_en)
-     VALUES ($1, $2, $3, 'entrante', $4, 'text', 'recibido', $5, NOW())
+     VALUES ($1, $2, $3, $4, $5, 'text', $6, $7, NOW())
      RETURNING *`,
     [
       conversacionId,
       empresaId,
       msg.key.id,
+      esSaliente ? 'saliente' : 'entrante',
       texto,
+      esSaliente ? 'sent' : 'recibido',
       new Date((Number(msg.messageTimestamp) || Math.floor(Date.now() / 1000)) * 1000),
     ]
+  );
+
+  notificarNuevoMensaje(empresaId, {
+    conversacionId,
+    mensaje: {
+      id: nuevoMensaje.rows[0].mensaje_id,
+      conversacion_id: nuevoMensaje.rows[0].conversacion_id,
+      plataforma_mensaje_id: nuevoMensaje.rows[0].plataforma_mensaje_id,
+      direccion: nuevoMensaje.rows[0].direccion,
+      contenido: nuevoMensaje.rows[0].contenido,
+      tipo: nuevoMensaje.rows[0].tipo,
+      media_url: nuevoMensaje.rows[0].media_url,
+      estado: nuevoMensaje.rows[0].estado,
+      timestamp: nuevoMensaje.rows[0].fecha_hora,
+      creado_en: nuevoMensaje.rows[0].creado_en,
+    },
+  });
+
+  if (!esSaliente && !conversacion.rows[0].asignado_a_humano) {
+    await responderConIA(canalId, empresaId, conversacionId, numero).catch((err) =>
+      console.error('[baileys] error generando/enviando respuesta IA:', err.message)
+    );
+  }
+}
+
+// Genera una respuesta con IA para la conversación y la envía por WhatsApp,
+// dejando registrado el mensaje saliente como si lo hubiera mandado un agente.
+async function responderConIA(canalId, empresaId, conversacionId, numero) {
+  const historial = await query(
+    `SELECT direccion, contenido FROM mensajes
+     WHERE conversacion_id = $1
+     ORDER BY fecha_hora DESC LIMIT 10`,
+    [conversacionId]
+  );
+
+  const mensajesContexto = historial.rows.reverse().map((m) => ({
+    rol: m.direccion === 'entrante' ? 'usuario' : 'asistente',
+    contenido: m.contenido,
+  }));
+
+  const resultado = await generarRespuestaIA(empresaId, mensajesContexto);
+  if (!resultado || !resultado.sugerencia) return;
+
+  const result = await enviarMensaje(canalId, numero, resultado.sugerencia);
+  const whatsappMessageId = result?.key?.id || `qr_${Date.now()}`;
+
+  const nuevoMensaje = await query(
+    `INSERT INTO mensajes
+     (conversacion_id, empresa_id, plataforma_mensaje_id, direccion, contenido, tipo, estado, fecha_hora, creado_en)
+     VALUES ($1, $2, $3, 'saliente', $4, 'text', 'sent', NOW(), NOW())
+     RETURNING *`,
+    [conversacionId, empresaId, whatsappMessageId, resultado.sugerencia]
+  );
+
+  await query(
+    `UPDATE conversaciones SET ultimo_mensaje_en = NOW() WHERE conversaciones_id = $1`,
+    [conversacionId]
   );
 
   notificarNuevoMensaje(empresaId, {

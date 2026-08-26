@@ -211,7 +211,7 @@ const getContactoById = async (req, res) => {
 
 const createContacto = async (req, res) => {
   const { empresaId } = req.params;
-  const { nombre, email, telefono, id_cliente } = req.body;
+  const { nombre, email, telefono, id_cliente, notas, etiquetas } = req.body;
   console.log(`[CONTACTOS] Creando contacto "${nombre}" en empresa ID: ${empresaId}`);
 
   if (!nombre || !telefono) {
@@ -220,10 +220,10 @@ const createContacto = async (req, res) => {
 
   try {
     const result = await query(
-      `INSERT INTO contactos (empresa_id, id_cliente, numero_telefono, nombre, email)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO contactos (empresa_id, id_cliente, numero_telefono, nombre, email, notas, etiquetas)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [empresaId, id_cliente || null, telefono, nombre, email || null]
+      [empresaId, id_cliente || null, telefono, nombre, email || null, notas || null, etiquetas ? JSON.stringify(etiquetas) : null]
     );
 
     console.log(`[CONTACTOS] Contacto creado: "${nombre}" (ID: ${result.rows[0].id_contactos})`);
@@ -236,7 +236,7 @@ const createContacto = async (req, res) => {
 
 const updateContacto = async (req, res) => {
   const { empresaId, id } = req.params;
-  const { nombre, email, numero_telefono } = req.body;
+  const { nombre, email, numero_telefono, notas, etiquetas } = req.body;
   console.log(`[CONTACTOS] Actualizando contacto ID: ${id} en empresa ID: ${empresaId}`);
 
   try {
@@ -244,10 +244,12 @@ const updateContacto = async (req, res) => {
       `UPDATE contactos
        SET nombre = COALESCE($1, nombre),
            email = COALESCE($2, email),
-           numero_telefono = COALESCE($3, numero_telefono)
-       WHERE id_contactos = $4 AND empresa_id = $5
+           numero_telefono = COALESCE($3, numero_telefono),
+           notas = COALESCE($4, notas),
+           etiquetas = COALESCE($5, etiquetas)
+       WHERE id_contactos = $6 AND empresa_id = $7
        RETURNING *`,
-      [nombre, email, numero_telefono, id, empresaId]
+      [nombre, email, numero_telefono, notas, etiquetas ? JSON.stringify(etiquetas) : null, id, empresaId]
     );
 
     if (result.rows.length === 0) {
