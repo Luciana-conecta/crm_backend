@@ -211,7 +211,7 @@ const getContactoById = async (req, res) => {
 
 const createContacto = async (req, res) => {
   const { empresaId } = req.params;
-  const { nombre, email, telefono, id_cliente, notas, etiquetas } = req.body;
+  const { nombre, email, telefono, id_cliente, notas, etiquetas, empresa } = req.body;
   console.log(`[CONTACTOS] Creando contacto "${nombre}" en empresa ID: ${empresaId}`);
 
   if (!nombre || !telefono) {
@@ -220,10 +220,10 @@ const createContacto = async (req, res) => {
 
   try {
     const result = await query(
-      `INSERT INTO contactos (empresa_id, id_cliente, numero_telefono, nombre, email, notas, etiquetas)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO contactos (empresa_id, id_cliente, numero_telefono, nombre, email, notas, etiquetas, campos_personalizados)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
-      [empresaId, id_cliente || null, telefono, nombre, email || null, notas || null, etiquetas ? JSON.stringify(etiquetas) : null]
+      [empresaId, id_cliente || null, telefono, nombre, email || null, notas || null, etiquetas && etiquetas.length ? etiquetas : null, empresa ? JSON.stringify({ empresa }) : null]
     );
 
     console.log(`[CONTACTOS] Contacto creado: "${nombre}" (ID: ${result.rows[0].id_contactos})`);
@@ -236,7 +236,7 @@ const createContacto = async (req, res) => {
 
 const updateContacto = async (req, res) => {
   const { empresaId, id } = req.params;
-  const { nombre, email, numero_telefono, notas, etiquetas } = req.body;
+  const { nombre, email, numero_telefono, notas, etiquetas, empresa } = req.body;
   console.log(`[CONTACTOS] Actualizando contacto ID: ${id} en empresa ID: ${empresaId}`);
 
   try {
@@ -246,10 +246,13 @@ const updateContacto = async (req, res) => {
            email = COALESCE($2, email),
            numero_telefono = COALESCE($3, numero_telefono),
            notas = COALESCE($4, notas),
-           etiquetas = COALESCE($5, etiquetas)
-       WHERE id_contactos = $6 AND empresa_id = $7
+           etiquetas = COALESCE($5, etiquetas),
+           campos_personalizados = CASE WHEN $6::text IS NOT NULL
+             THEN COALESCE(campos_personalizados, '{}'::jsonb) || jsonb_build_object('empresa', $6::text)
+             ELSE campos_personalizados END
+       WHERE id_contactos = $7 AND empresa_id = $8
        RETURNING *`,
-      [nombre, email, numero_telefono, notas, etiquetas ? JSON.stringify(etiquetas) : null, id, empresaId]
+      [nombre, email, numero_telefono, notas, etiquetas && etiquetas.length ? etiquetas : null, empresa || null, id, empresaId]
     );
 
     if (result.rows.length === 0) {
