@@ -3,7 +3,36 @@ import { query } from '../config/database.js';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// ─── Helper: cargar contexto completo de la empresa ──────────────────────────
+const INTENCIONES_DERIVAR = ['intencion_compra', 'solicitud_humano', 'agendar_cita'];
+const notificarTelegram = async ({ empresa, chatId, mensajes, intencion }) => {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const destinatario = process.env.TELEGRAM_NOTIFICACIONES_CHAT_ID; // grupo/chat interno de ventas
+
+  if (!token || !destinatario) return;
+
+  const ultimoMensajeUsuario = [...mensajes].reverse().find((m) => m.rol === 'usuario')?.contenido || '';
+
+  const texto =
+    `🔔 *Nueva conversación para derivar*\n` +
+    `Empresa: ${empresa?.nombre || 'N/D'}\n` +
+    `Intención detectada: ${intencion}\n` +
+    `Chat: ${chatId}\n\n` +
+    `Último mensaje del cliente:\n"${ultimoMensajeUsuario}"`;
+
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: destinatario,
+        text: texto,
+        parse_mode: 'Markdown',
+      }),
+    });
+  } catch (err) {
+    console.error('Error notificando por Telegram:', err);
+  }
+};
 
 export const cargarContexto = async (empresaId) => {
   const [configRes, productosRes, faqsRes, reglasRes, empresaRes] = await Promise.all([
@@ -77,6 +106,10 @@ export const buildSystemPrompt = ({ config, productos, faqs, reglas, empresa }) 
     prompt += `## INSTRUCCIONES ESPECIALES\n${config.instrucciones_adicionales}\n\n`;
   }
 
+  prompt += `## PROHIBIDO AGENDAR REUNIONES O CITAS POR TU CUENTA\n`;
+  prompt += `Nunca confirmes, propongas ni aceptes una fecha, horario o reunión específica en nombre de ${nombre}. No digas frases como "quedamos el [día] a las [hora]" ni "confirmado, te espero".\n`;
+  prompt += `Si el usuario quiere coordinar una cita/reunión/llamada, decile que un miembro del equipo se va a contactar para coordinar el horario, y NO cierres vos el detalle.\n\n`;
+
   prompt += `## CLASIFICACIÓN DE INTENCIÓN
 Al final de cada respuesta, en una línea separada escribe exactamente:
 INTENCION: [tipo]
@@ -89,6 +122,7 @@ Tipos posibles:
 - intencion_compra
 - queja
 - solicitud_humano
+- agendar_cita (el usuario quiere coordinar una cita, reunión o llamada)
 - otro`;
 
   return prompt;
@@ -98,7 +132,7 @@ Tipos posibles:
 // mensajes: [{ rol: 'usuario' | 'asistente', contenido: string }, ...]
 // Devuelve null si el asistente IA está desactivado para la empresa (config.activo !== true).
 
-export const generarRespuestaIA = async (empresaId, mensajes = []) => {
+export const generarRespuestaIA = async (empresaId, mensajes = [], chatId = null) => {
   const contexto = await cargarContexto(empresaId);
 
   if (contexto.config?.activo !== true) {
@@ -133,6 +167,10 @@ export const generarRespuestaIA = async (empresaId, mensajes = []) => {
     .filter((l) => !l.startsWith('INTENCION:'))
     .join('\n')
     .trim();
+
+  if (INTENCIONES_DERIVAR.includes(intencion)) {
+    notificarTelegram({ empresa: contexto.empresa, chatId, mensajes, intencion }); // no bloqueante
+  }
 
   return { sugerencia, intencion };
 };

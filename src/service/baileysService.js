@@ -257,7 +257,7 @@ async function responderConIA(canalId, empresaId, conversacionId, numero) {
     contenido: m.contenido,
   }));
 
-  const resultado = await generarRespuestaIA(empresaId, mensajesContexto);
+  const resultado = await generarRespuestaIA(empresaId, mensajesContexto, conversacionId);
   if (!resultado || !resultado.sugerencia) return;
 
   const result = await enviarMensaje(canalId, numero, resultado.sugerencia);
