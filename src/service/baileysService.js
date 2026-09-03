@@ -2,6 +2,7 @@ import makeWASocket, {
   DisconnectReason,
   fetchLatestBaileysVersion,
   useMultiFileAuthState,
+  downloadMediaMessage,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
@@ -11,6 +12,7 @@ import QRCode from 'qrcode';
 import { query } from '../config/database.js';
 import { notificarNuevoMensaje } from './websocketService.js';
 import { generarRespuestaIA } from './iaService.js';
+import { guardarMedia } from './mediaService.js';
 
 const AUTH_BASE = path.resolve(process.cwd(), 'whatsapp_sessions');
 const logger = pino({ level: 'silent' });
@@ -116,7 +118,7 @@ export async function iniciarSesion(canalIdRaw, empresaId) {
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
     for (const msg of messages) {
-      await procesarMensaje(canalId, empresaId, msg).catch((err) =>
+      await procesarMensaje(canalId, empresaId, msg, sock).catch((err) =>
         console.error('[baileys] error procesando mensaje:', err.message)
       );
     }
@@ -125,34 +127,76 @@ export async function iniciarSesion(canalIdRaw, empresaId) {
   return sesion;
 }
 
-async function procesarMensaje(canalId, empresaId, msg) {
+const TIPOS_CON_ARCHIVO = new Set(['image', 'video', 'audio', 'document', 'sticker']);
+
+async function procesarMensaje(canalId, empresaId, msg, sock) {
   const jid = msg.key.remoteJid ?? '';
   if (!jid || jid.endsWith('@g.us') || jid === 'status@broadcast') return;
 
-  // fromMe: el agente respondió desde el teléfono vinculado (no desde el CRM).
-  // Si ya viene del flujo del CRM (inboxController.enviarMensaje), esa fila ya
-  // existe con este mismo plataforma_mensaje_id: evitar duplicarla.
   const esSaliente = Boolean(msg.key.fromMe);
-  if (esSaliente) {
-    const existente = await query(
-      'SELECT 1 FROM mensajes WHERE plataforma_mensaje_id = $1 AND empresa_id = $2',
-      [msg.key.id, empresaId]
-    );
-    if (existente.rows.length > 0) return;
-  }
+
+  // Baileys puede reentregar el mismo evento messages.upsert (reconexiones,
+  // sincronización) y un eco saliente (fromMe) del propio envío del CRM ya
+  // existe con este mismo plataforma_mensaje_id: en ambos casos, no reprocesar
+  // — si no, un mensaje entrante duplicado dispara una segunda respuesta de la IA.
+  const existente = await query(
+    'SELECT 1 FROM mensajes WHERE plataforma_mensaje_id = $1 AND empresa_id = $2',
+    [msg.key.id, empresaId]
+  );
+  if (existente.rows.length > 0) return;
 
   // Los contactos con privacidad activada llegan como @lid (identificador vinculado)
   // en vez del número real. Hay que conservar el JID completo para poder responderles;
   // reconstruir "<numero>@s.whatsapp.net" a partir de un LID apunta a un destino inexistente.
   const numero = jid.endsWith('@lid') ? jid : jid.split('@')[0];
-  const texto =
-    msg.message?.conversation ||
-    msg.message?.extendedTextMessage?.text ||
-    msg.message?.imageMessage?.caption ||
-    msg.message?.videoMessage?.caption ||
-    null;
+  const m = msg.message;
+  let texto = null;
+  let tipo = 'text';
 
-  if (!texto) return;
+  if (m?.conversation) {
+    texto = m.conversation;
+  } else if (m?.extendedTextMessage?.text) {
+    texto = m.extendedTextMessage.text;
+  } else if (m?.imageMessage) {
+    texto = m.imageMessage.caption || '[Imagen]';
+    tipo = 'image';
+  } else if (m?.videoMessage) {
+    texto = m.videoMessage.caption || '[Video]';
+    tipo = 'video';
+  } else if (m?.audioMessage) {
+    texto = '[Audio]';
+    tipo = 'audio';
+  } else if (m?.documentMessage) {
+    texto = m.documentMessage.fileName || '[Documento]';
+    tipo = 'document';
+  } else if (m?.stickerMessage) {
+    texto = '[Sticker]';
+    tipo = 'sticker';
+  } else if (m?.locationMessage) {
+    texto = '[Ubicación]';
+    tipo = 'location';
+  } else if (m?.contactMessage) {
+    texto = '[Contacto]';
+    tipo = 'contact';
+  }
+
+  if (!texto) {
+    console.warn('[baileys] mensaje sin contenido soportado, descartado. tipos presentes:', m ? Object.keys(m) : msg);
+    return;
+  }
+
+  let mediaUrl = null;
+  if (TIPOS_CON_ARCHIVO.has(tipo)) {
+    try {
+      const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
+      const mimetype = m[`${tipo}Message`]?.mimetype;
+      const nombreSugerido = tipo === 'document' ? m.documentMessage?.fileName : null;
+      mediaUrl = guardarMedia(empresaId, buffer, mimetype, nombreSugerido);
+    } catch (err) {
+      console.error('[baileys] error descargando media, se guarda solo el placeholder:', err.message);
+    }
+  }
+
   const nombreContacto = msg.pushName || numero;
 
   let cliente = await query(
@@ -203,10 +247,15 @@ async function procesarMensaje(canalId, empresaId, msg) {
 
   const conversacionId = conversacion.rows[0].conversaciones_id;
 
+  // ON CONFLICT DO NOTHING: red de seguridad ante una carrera real (dos procesos
+  // procesando el mismo mensaje casi al mismo tiempo) — el chequeo de arriba
+  // (SELECT) no es atómico por sí solo. Si perdemos la carrera, no hay fila que
+  // devolver: hay que cortar acá y no duplicar el mensaje ni la respuesta de la IA.
   const nuevoMensaje = await query(
     `INSERT INTO mensajes
-     (conversacion_id, empresa_id, plataforma_mensaje_id, direccion, contenido, tipo, estado, fecha_hora, creado_en)
-     VALUES ($1, $2, $3, $4, $5, 'text', $6, $7, NOW())
+     (conversacion_id, empresa_id, plataforma_mensaje_id, direccion, contenido, tipo, media_url, estado, fecha_hora, creado_en)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+     ON CONFLICT (empresa_id, plataforma_mensaje_id) WHERE plataforma_mensaje_id IS NOT NULL DO NOTHING
      RETURNING *`,
     [
       conversacionId,
@@ -214,10 +263,14 @@ async function procesarMensaje(canalId, empresaId, msg) {
       msg.key.id,
       esSaliente ? 'saliente' : 'entrante',
       texto,
+      tipo,
+      mediaUrl,
       esSaliente ? 'sent' : 'recibido',
       new Date((Number(msg.messageTimestamp) || Math.floor(Date.now() / 1000)) * 1000),
     ]
   );
+
+  if (nuevoMensaje.rows.length === 0) return;
 
   notificarNuevoMensaje(empresaId, {
     conversacionId,
@@ -326,6 +379,22 @@ export async function enviarMensaje(canalIdRaw, numero, texto) {
   return result;
 }
 
+export async function enviarArchivo(canalIdRaw, numero, buffer, fileName, mimetype, caption = '') {
+  const canalId = String(canalIdRaw);
+  const sesion = sesiones.get(canalId);
+  if (!sesion || sesion.status !== 'connected') {
+    throw new Error('El canal de WhatsApp (QR) no está conectado.');
+  }
+  const jid = numero.includes('@') ? numero : `${numero}@s.whatsapp.net`;
+  const result = await sesion.sock.sendMessage(jid, {
+    document: buffer,
+    fileName,
+    mimetype: mimetype || 'application/octet-stream',
+    caption,
+  });
+  return result;
+}
+
 export async function cerrarSesion(canalIdRaw) {
   const canalId = String(canalIdRaw);
   const sesion = sesiones.get(canalId);
@@ -337,6 +406,19 @@ export async function cerrarSesion(canalIdRaw) {
   const dir = authDir(canalId);
   fs.rmSync(dir, { recursive: true, force: true });
   await actualizarCanalDb(canalId, { qr_status: 'disconnected', qr_phone: null, activo: false }).catch(() => {});
+}
+
+// Cierra todos los sockets activos SIN desvincular el dispositivo (no borra
+// credenciales). Se usa al apagar el proceso (SIGTERM/SIGINT) para que WhatsApp
+// registre la desconexión antes de que un proceso nuevo (redeploy, nodemon,
+// crash-restart) intente reconectar con la misma sesión — si no, durante el
+// solape ambos sockets quedan "vivos" y cada uno responde por su cuenta al
+// mismo mensaje entrante, duplicando las respuestas de la IA.
+export function cerrarTodosLosSockets() {
+  for (const sesion of sesiones.values()) {
+    try { sesion.sock.end(undefined); } catch {}
+  }
+  sesiones.clear();
 }
 
 export async function restaurarSesiones() {

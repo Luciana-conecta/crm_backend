@@ -1,6 +1,6 @@
 import express from 'express';
 import  whatsappWebhookController  from '../controllers/webhookController.js';
-import  {inboxController } from '../controllers/inboxController.js';
+import  {inboxController, uploadArchivo } from '../controllers/inboxController.js';
 import  { canalController } from '../controllers/canalController.js';
 import  {authenticateToken  }  from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
@@ -15,6 +15,9 @@ router.get('/conversaciones/:conversacionId/mensajes', authenticateToken, inboxC
 router.post('/conversaciones/enviar', authenticateToken, inboxController.enviarMensaje);
 router.patch('/conversaciones/:conversacionId', authenticateToken, inboxController.actualizarEstado);
 router.post('/conversaciones/:conversacionId/marcar-leido', authenticateToken, inboxController.marcarComoLeido);
+router.post('/conversaciones/:conversacionId/enviar-archivo', authenticateToken, uploadArchivo, inboxController.enviarArchivo);
+router.get('/media/:empresaId/:filename', authenticateToken, inboxController.obtenerMedia);
+router.get('/media-publico/:empresaId/:filename', inboxController.obtenerMediaPublico);
 router.post('/conversaciones/:conversacionId/transferir-humano', authenticateToken, asyncHandler(transferirHumano));
 router.post('/conversaciones/:conversacionId/reactivar-ia', authenticateToken, asyncHandler(reactivarIA));
 

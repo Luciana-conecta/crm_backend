@@ -35,3 +35,6 @@ build/
 
 # Sesiones de WhatsApp (Baileys) — credenciales de sesión, no deben subirse
 whatsapp_sessions/
+
+# Archivos multimedia descargados de WhatsApp (audio, imágenes, documentos)
+uploads/

@@ -1,6 +1,7 @@
 import { query } from '../config/database.js';
 import WhatsAppService from '../service/whatsappService.js';
 import { notificarNuevoMensaje } from '../service/websocketService.js';
+import { guardarMedia } from '../service/mediaService.js';
 
 const whatsappWebhookController = {
   verificarWebhook(req, res) {
@@ -137,8 +138,18 @@ const whatsappWebhookController = {
 
       const conversacionId = conversacion.rows[0].conversaciones_id;
 
+      const whatsapp = new WhatsAppService(canal.phone_number_id, canal.access_token, canal.business_account_id);
+
       let contenido = '';
       let mediaUrl = null;
+
+      // Descarga el archivo real de Meta y lo deja servible desde /api/whatsapp/media/...
+      // Si la descarga falla, el mensaje se guarda igual con el placeholder (mejor eso que perderlo).
+      async function descargarYGuardar(mediaId, nombreSugerido) {
+        const media = await whatsapp.descargarMedia(mediaId);
+        if (!media) return null;
+        return guardarMedia(canal.empresa_id, media.buffer, media.mimeType, nombreSugerido);
+      }
 
       switch (mensaje.type) {
         case 'text':
@@ -146,19 +157,19 @@ const whatsappWebhookController = {
           break;
         case 'image':
           contenido = mensaje.image.caption || '[Imagen]';
-          mediaUrl = mensaje.image.id;
+          mediaUrl = await descargarYGuardar(mensaje.image.id);
           break;
         case 'video':
           contenido = mensaje.video.caption || '[Video]';
-          mediaUrl = mensaje.video.id;
+          mediaUrl = await descargarYGuardar(mensaje.video.id);
           break;
         case 'audio':
           contenido = '[Audio]';
-          mediaUrl = mensaje.audio.id;
+          mediaUrl = await descargarYGuardar(mensaje.audio.id);
           break;
         case 'document':
           contenido = mensaje.document.filename || '[Documento]';
-          mediaUrl = mensaje.document.id;
+          mediaUrl = await descargarYGuardar(mensaje.document.id, mensaje.document.filename);
           break;
         default:
           contenido = `[${mensaje.type}]`;
@@ -202,7 +213,6 @@ const whatsappWebhookController = {
       });
 
       try {
-        const whatsapp = new WhatsAppService(canal.phone_number_id, canal.access_token, canal.business_account_id);
         await whatsapp.marcarComoLeido(mensaje.id);
       } catch (error) {
         console.log('⚠️ No se pudo marcar como leído:', error.message);

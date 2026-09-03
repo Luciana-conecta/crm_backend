@@ -86,6 +86,23 @@ class WhatsAppService {
     }
   }
 
+  async descargarMedia(mediaId) {
+    try {
+      const infoResponse = await this.client.get(`/${mediaId}`);
+      const { url, mime_type } = infoResponse.data;
+
+      const fileResponse = await axios.get(url, {
+        headers: { Authorization: `Bearer ${this.accessToken}` },
+        responseType: 'arraybuffer',
+      });
+
+      return { buffer: Buffer.from(fileResponse.data), mimeType: mime_type };
+    } catch (error) {
+      console.error('❌ Error descargando media:', error.response?.data || error.message);
+      return null;
+    }
+  }
+
   async marcarComoLeido(mensajeId) {
     try {
       console.log(`📖 Marcando mensaje como leído: ${mensajeId}`);

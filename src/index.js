@@ -10,12 +10,16 @@ import whatsappRoutes from './routes/whatsapp.js';
 import billingRoutes from './routes/billing.js';
 import iaRoutes from './routes/ia.js';
 import socialRoutes from './routes/social.js';
-import { restaurarSesiones } from './service/baileysService.js';
+import { restaurarSesiones, cerrarTodosLosSockets } from './service/baileysService.js';
 import { inicializarWebSocket } from './service/websocketService.js';
 
 const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 3001;
+
+// Necesario para que req.protocol refleje https cuando el server corre detrás de un
+// proxy/balanceador (usado para armar el link de documentos que Meta descarga).
+app.set('trust proxy', 1);
 
 
 app.use(cors({
@@ -74,10 +78,14 @@ server.listen(PORT, () => {
   console.log(` Health check: http://localhost:${PORT}/health`);
   restaurarSesiones();
 });
-process.on('SIGTERM', () => {
+// Cerrar los sockets de WhatsApp antes de salir: evita que, durante un
+// restart (nodemon, deploy, crash-restart), el proceso viejo y el nuevo
+// queden con la misma sesión conectada a la vez y cada uno responda por
+// su cuenta al mismo mensaje entrante (la IA "duplicándose").
+function apagar() {
+  cerrarTodosLosSockets();
   process.exit(0);
-});
+}
 
-process.on('SIGINT', () => {
-  process.exit(0);
-});
+process.on('SIGTERM', apagar);
+process.on('SIGINT', apagar);
