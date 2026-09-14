@@ -12,6 +12,7 @@ import iaRoutes from './routes/ia.js';
 import socialRoutes from './routes/social.js';
 import { restaurarSesiones, cerrarTodosLosSockets } from './service/baileysService.js';
 import { inicializarWebSocket } from './service/websocketService.js';
+import { asegurarIndicesCriticos } from './config/database.js';
 
 const app = express();
 const server = http.createServer(app);
@@ -72,10 +73,11 @@ app.use((err, req, res, next) => {
 });
 inicializarWebSocket(server);
 
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   console.log(` Running on: http://localhost:${PORT}`);
   console.log(` Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(` Health check: http://localhost:${PORT}/health`);
+  await asegurarIndicesCriticos();
   restaurarSesiones();
 });
 // Cerrar los sockets de WhatsApp antes de salir: evita que, durante un

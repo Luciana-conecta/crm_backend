@@ -38,4 +38,21 @@ export const query = async (text, params) => {
 
 export const getClient = () => pool.connect();
 
+// El ON CONFLICT (empresa_id, plataforma_mensaje_id) en baileysService.js exige
+// que este índice exista; antes vivía solo en un script suelto (add-mensajes-unique-plataforma-id.js)
+// que había que correr a mano contra la base, y si nunca se corrió el INSERT
+// de cada mensaje entrante por WhatsApp-QR fallaba en silencio (atrapado por el
+// .catch() del listener), dejando conversaciones enteras sin mensajes guardados.
+export const asegurarIndicesCriticos = async () => {
+  try {
+    await query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS mensajes_empresa_plataforma_msg_id_key
+      ON mensajes (empresa_id, plataforma_mensaje_id)
+      WHERE plataforma_mensaje_id IS NOT NULL
+    `);
+  } catch (error) {
+    console.error('[db] no se pudo asegurar mensajes_empresa_plataforma_msg_id_key:', error.message);
+  }
+};
+
 export default pool;
