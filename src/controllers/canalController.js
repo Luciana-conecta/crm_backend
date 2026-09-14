@@ -2,6 +2,15 @@ import { query } from '../config/database.js';
 import WhatsAppService from '../service/whatsappService.js';
 import * as baileysService from '../service/baileysService.js';
 
+// null = super_admin, sin restricción de empresa; el resto de usuarios solo
+// puede tocar canales de su propia empresa (evita el IDOR de cambiar canalId
+// en la URL para operar sobre el canal de otra empresa, incluyendo robarle
+// el access_token de Meta).
+function empresaDelToken(req) {
+  if (req.user.tipo_usuario === 'super_admin') return null;
+  return req.user.empresa_id ?? -1;
+}
+
 export const canalController = {
   async crearCanal(req, res) {
     try {
@@ -113,6 +122,7 @@ export const canalController = {
     try {
       const { canalId } = req.params;
       const { nombre, phone_number_id, access_token, business_account_id, client_id, client_secret } = req.body;
+      const empresaId = empresaDelToken(req);
 
       const configPatch = JSON.stringify({
         ...(client_id     !== undefined && { client_id:     client_id     || null }),
@@ -128,8 +138,9 @@ export const canalController = {
              config              = COALESCE(config, '{}'::jsonb) || $5::jsonb,
              updated_at          = NOW()
          WHERE id = $6
+           AND ($7::int IS NULL OR empresa_id = $7)
          RETURNING *`,
-        [nombre, phone_number_id, access_token, business_account_id, configPatch, canalId]
+        [nombre, phone_number_id, access_token, business_account_id, configPatch, canalId, empresaId]
       );
 
       if (result.rows.length === 0) {
@@ -146,10 +157,11 @@ export const canalController = {
   async eliminarCanal(req, res) {
     try {
       const { canalId } = req.params;
+      const empresaId = empresaDelToken(req);
 
       const result = await query(
-        'DELETE FROM canales WHERE id = $1 RETURNING id',
-        [canalId]
+        'DELETE FROM canales WHERE id = $1 AND ($2::int IS NULL OR empresa_id = $2) RETURNING id',
+        [canalId, empresaId]
       );
 
       if (result.rows.length === 0) {
@@ -213,6 +225,16 @@ export const canalController = {
   async estadoCanalQR(req, res) {
     try {
       const { canalId } = req.params;
+      const empresaId = empresaDelToken(req);
+
+      const canal = await query(
+        'SELECT id FROM canales WHERE id = $1 AND ($2::int IS NULL OR empresa_id = $2)',
+        [canalId, empresaId]
+      );
+      if (canal.rows.length === 0) {
+        return res.status(404).json({ success: false, error: 'Canal no encontrado' });
+      }
+
       const estado = await baileysService.obtenerEstado(canalId);
       res.json({ success: true, ...estado });
     } catch (error) {
@@ -224,8 +246,17 @@ export const canalController = {
   async desconectarCanalQR(req, res) {
     try {
       const { canalId } = req.params;
+      const empresaId = empresaDelToken(req);
+
+      const result = await query(
+        'DELETE FROM canales WHERE id = $1 AND ($2::int IS NULL OR empresa_id = $2) RETURNING id',
+        [canalId, empresaId]
+      );
+      if (result.rows.length === 0) {
+        return res.status(404).json({ success: false, error: 'Canal no encontrado' });
+      }
+
       await baileysService.cerrarSesion(canalId);
-      await query('DELETE FROM canales WHERE id = $1', [canalId]);
       res.json({ success: true, message: 'Canal QR desconectado' });
     } catch (error) {
       console.error('Error desconectando canal QR:', error);
@@ -236,10 +267,11 @@ export const canalController = {
   async probarCanal(req, res) {
     try {
       const { canalId } = req.params;
+      const empresaId = empresaDelToken(req);
 
       const result = await query(
-        'SELECT * FROM canales WHERE id = $1',
-        [canalId]
+        'SELECT * FROM canales WHERE id = $1 AND ($2::int IS NULL OR empresa_id = $2)',
+        [canalId, empresaId]
       );
 
       if (result.rows.length === 0) {

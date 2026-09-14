@@ -47,14 +47,17 @@ export const authorize = (...allowedTypes) => {
   };
 };
 
-export const checkEmpresaAccess = async (req, res, next) => {
-  const empresaId = req.params.empresaId;
-  
+// Evita que una empresa autenticada acceda a datos de otra empresa cambiando el
+// id en la URL (IDOR) — valida req.params[paramName] contra el empresa_id del
+// token, salvo para super_admin que no tiene empresa propia.
+export const checkEmpresaAccess = (paramName = 'empresaId') => (req, res, next) => {
+  const empresaId = req.params[paramName];
+
   if (req.user.tipo_usuario === 'super_admin') {
     return next();
   }
 
-  if (req.user.empresa_id && req.user.empresa_id == empresaId) {
+  if (req.user.empresa_id != null && String(req.user.empresa_id) === String(empresaId)) {
     return next();
   }
 

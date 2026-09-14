@@ -1,7 +1,28 @@
+import crypto from 'node:crypto';
 import { query } from '../config/database.js';
 import WhatsAppService from '../service/whatsappService.js';
 import { notificarNuevoMensaje } from '../service/websocketService.js';
 import { guardarMedia } from '../service/mediaService.js';
+
+// Meta firma cada webhook con HMAC-SHA256 del body crudo usando el app secret
+// (cabecera X-Hub-Signature-256). Sin esto, cualquiera que adivine/filtre un
+// phone_number_id existente puede mandar un POST falso y el backend lo procesa
+// como si fuera un mensaje real de WhatsApp (crea contactos, dispara la IA, etc).
+function firmaValida(req) {
+  const appSecret = process.env.WHATSAPP_APP_SECRET;
+  if (!appSecret) {
+    console.warn('⚠️  WHATSAPP_APP_SECRET no configurado: el webhook de WhatsApp NO valida su origen.');
+    return true;
+  }
+
+  const firma = req.headers['x-hub-signature-256'];
+  if (!firma || !req.rawBody) return false;
+
+  const esperada = 'sha256=' + crypto.createHmac('sha256', appSecret).update(req.rawBody).digest('hex');
+  const a = Buffer.from(firma);
+  const b = Buffer.from(esperada);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
 
 const whatsappWebhookController = {
   verificarWebhook(req, res) {
@@ -21,6 +42,11 @@ const whatsappWebhookController = {
   },
 
   async recibirWebhook(req, res) {
+    if (!firmaValida(req)) {
+      console.error('❌ Webhook de WhatsApp con firma inválida — descartado');
+      return res.sendStatus(403);
+    }
+
     res.sendStatus(200);
 
     const body = req.body;

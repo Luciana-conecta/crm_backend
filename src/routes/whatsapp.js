@@ -2,7 +2,7 @@ import express from 'express';
 import  whatsappWebhookController  from '../controllers/webhookController.js';
 import  {inboxController, uploadArchivo } from '../controllers/inboxController.js';
 import  { canalController } from '../controllers/canalController.js';
-import  {authenticateToken  }  from '../middleware/auth.js';
+import  {authenticateToken, checkEmpresaAccess  }  from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { transferirHumano, reactivarIA } from '../controllers/iaController.js';
 
@@ -22,14 +22,14 @@ router.post('/conversaciones/:conversacionId/transferir-humano', authenticateTok
 router.post('/conversaciones/:conversacionId/reactivar-ia', authenticateToken, asyncHandler(reactivarIA));
 
 // Canales WhatsApp
-router.get('/empresas/:empresaId/canales', authenticateToken, canalController.listarCanales);
-router.post('/empresas/:empresaId/canales', authenticateToken, canalController.crearCanal);
+router.get('/empresas/:empresaId/canales', authenticateToken, checkEmpresaAccess(), canalController.listarCanales);
+router.post('/empresas/:empresaId/canales', authenticateToken, checkEmpresaAccess(), canalController.crearCanal);
 router.put('/canales/:canalId', authenticateToken, canalController.actualizarCanal);
 router.delete('/canales/:canalId', authenticateToken, canalController.eliminarCanal);
 router.post('/canales/:canalId/probar', authenticateToken, canalController.probarCanal);
 
 // Canal WhatsApp vía QR (Baileys)
-router.post('/empresas/:empresaId/canales/qr', authenticateToken, canalController.crearCanalQR);
+router.post('/empresas/:empresaId/canales/qr', authenticateToken, checkEmpresaAccess(), canalController.crearCanalQR);
 router.get('/canales/:canalId/qr-estado', authenticateToken, canalController.estadoCanalQR);
 router.post('/canales/:canalId/qr-desconectar', authenticateToken, canalController.desconectarCanalQR);
 

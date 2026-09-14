@@ -2,6 +2,14 @@ import { query } from '../config/database.js';
 
 const PLATAFORMAS_VALIDAS = ['instagram', 'facebook', 'tiktok', 'twitter', 'linkedin', 'telegram'];
 
+// null = super_admin, sin restricción de empresa; el resto de usuarios solo
+// puede tocar canales de su propia empresa (evita el IDOR de cambiar canalId
+// en la URL para operar sobre el canal de otra empresa).
+function empresaDelToken(req) {
+  if (req.user.tipo_usuario === 'super_admin') return null;
+  return req.user.empresa_id ?? -1;
+}
+
 export const socialController = {
 
   async listarCanales(req, res) {
@@ -84,6 +92,7 @@ export const socialController = {
     try {
       const { canalId } = req.params;
       const { nombre, page_id, access_token, username, page_url, activo } = req.body;
+      const empresaId = empresaDelToken(req);
 
       const result = await query(
         `UPDATE canales_sociales
@@ -95,8 +104,9 @@ export const socialController = {
              activo       = COALESCE($6, activo),
              updated_at   = NOW()
          WHERE id = $7
+           AND ($8::int IS NULL OR empresa_id = $8)
          RETURNING *`,
-        [nombre, page_id, access_token, username, page_url, activo, canalId]
+        [nombre, page_id, access_token, username, page_url, activo, canalId, empresaId]
       );
 
       if (result.rows.length === 0) {
@@ -113,10 +123,11 @@ export const socialController = {
   async eliminarCanal(req, res) {
     try {
       const { canalId } = req.params;
+      const empresaId = empresaDelToken(req);
 
       const result = await query(
-        'DELETE FROM canales_sociales WHERE id = $1 RETURNING id',
-        [canalId]
+        'DELETE FROM canales_sociales WHERE id = $1 AND ($2::int IS NULL OR empresa_id = $2) RETURNING id',
+        [canalId, empresaId]
       );
 
       if (result.rows.length === 0) {
@@ -133,13 +144,15 @@ export const socialController = {
   async toggleActivo(req, res) {
     try {
       const { canalId } = req.params;
+      const empresaId = empresaDelToken(req);
 
       const result = await query(
         `UPDATE canales_sociales
          SET activo = NOT activo, updated_at = NOW()
          WHERE id = $1
+           AND ($2::int IS NULL OR empresa_id = $2)
          RETURNING id, plataforma, nombre, activo`,
-        [canalId]
+        [canalId, empresaId]
       );
 
       if (result.rows.length === 0) {

@@ -1,5 +1,5 @@
 import express from 'express';
-import { authenticateToken } from '../middleware/auth.js';
+import { authenticateToken, checkEmpresaAccess } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import empresaController from '../controllers/empresaController.js';
 
@@ -14,22 +14,22 @@ router.get('/roles', asyncHandler(async (req, res) => {
   res.json({ success: true, data: result.rows });
 }));
 
-router.put('/:id/logo', asyncHandler(empresaController.updateEmpresaLogo));
-router.get('/:empresaId/stats', asyncHandler(empresaController.getEmpresaStats));
-router.get('/:empresaId/clientes', asyncHandler(empresaController.getClientes));
-router.post('/:empresaId/clientes', asyncHandler(empresaController.createCliente));
-router.get('/:empresaId/clientes/:id', asyncHandler(empresaController.getClienteById));
-router.put('/:empresaId/clientes/:id', asyncHandler(empresaController.updateCliente));
-router.delete('/:empresaId/clientes/:id', asyncHandler(empresaController.deleteCliente));
-router.get('/:empresaId/contactos', asyncHandler(empresaController.getContactos));
-router.post('/:empresaId/contactos', asyncHandler(empresaController.createContacto));
-router.get('/:empresaId/contactos/:id', asyncHandler(empresaController.getContactoById));
-router.put('/:empresaId/contactos/:id', asyncHandler(empresaController.updateContacto));
-router.delete('/:empresaId/contactos/:id', asyncHandler(empresaController.deleteContacto));
-router.get('/:empresaId/user', asyncHandler(empresaController.getAllUserByEmpresa));
-router.get('/:empresaId/user/:id', asyncHandler(empresaController.getUserById));
-router.post('/:empresaId/user', asyncHandler(empresaController.createUser));
-router.put('/:empresaId/user/:id', asyncHandler(empresaController.updateUser));
-router.delete('/:empresaId/user/:id', asyncHandler(empresaController.deleteUser));
+router.put('/:id/logo', checkEmpresaAccess('id'), asyncHandler(empresaController.updateEmpresaLogo));
+router.get('/:empresaId/stats', checkEmpresaAccess(), asyncHandler(empresaController.getEmpresaStats));
+router.get('/:empresaId/clientes', checkEmpresaAccess(), asyncHandler(empresaController.getClientes));
+router.post('/:empresaId/clientes', checkEmpresaAccess(), asyncHandler(empresaController.createCliente));
+router.get('/:empresaId/clientes/:id', checkEmpresaAccess(), asyncHandler(empresaController.getClienteById));
+router.put('/:empresaId/clientes/:id', checkEmpresaAccess(), asyncHandler(empresaController.updateCliente));
+router.delete('/:empresaId/clientes/:id', checkEmpresaAccess(), asyncHandler(empresaController.deleteCliente));
+router.get('/:empresaId/contactos', checkEmpresaAccess(), asyncHandler(empresaController.getContactos));
+router.post('/:empresaId/contactos', checkEmpresaAccess(), asyncHandler(empresaController.createContacto));
+router.get('/:empresaId/contactos/:id', checkEmpresaAccess(), asyncHandler(empresaController.getContactoById));
+router.put('/:empresaId/contactos/:id', checkEmpresaAccess(), asyncHandler(empresaController.updateContacto));
+router.delete('/:empresaId/contactos/:id', checkEmpresaAccess(), asyncHandler(empresaController.deleteContacto));
+router.get('/:empresaId/user', checkEmpresaAccess(), asyncHandler(empresaController.getAllUserByEmpresa));
+router.get('/:empresaId/user/:id', checkEmpresaAccess(), asyncHandler(empresaController.getUserById));
+router.post('/:empresaId/user', checkEmpresaAccess(), asyncHandler(empresaController.createUser));
+router.put('/:empresaId/user/:id', checkEmpresaAccess(), asyncHandler(empresaController.updateUser));
+router.delete('/:empresaId/user/:id', checkEmpresaAccess(), asyncHandler(empresaController.deleteUser));
 
 export default router;

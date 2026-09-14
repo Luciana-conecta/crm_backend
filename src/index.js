@@ -2,6 +2,7 @@ import 'dotenv/config';
 import http from 'http';
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 
 import authRoutes from './routes/auth.js';
 import adminRoutes from './routes/admin.js';
@@ -22,6 +23,15 @@ const PORT = process.env.PORT || 3001;
 // proxy/balanceador (usado para armar el link de documentos que Meta descarga).
 app.set('trust proxy', 1);
 
+// CSP y COEP quedan desactivados: esta API no sirve HTML y el frontend (otro
+// origen) carga imágenes/documentos de /media directamente vía <img>/<a>, algo
+// que esas dos políticas bloquean por defecto.
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+}));
+
 
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:5173',
@@ -39,7 +49,9 @@ app.use(cors({
 }));
 
 
-app.use(express.json());
+// Se guarda el body crudo (rawBody) para poder validar la firma HMAC de los
+// webhooks de Meta (ver webhookController.recibirWebhook) sin reserializar el JSON.
+app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 app.use(express.urlencoded({ extended: true }));
 
 app.use('/api/auth', authRoutes);

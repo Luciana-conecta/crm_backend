@@ -7,9 +7,19 @@ import { notificarNuevoMensaje } from '../service/websocketService.js';
 import { guardarMedia, rutaMedia } from '../service/mediaService.js';
 
 // Documentos (PDF, Word, Excel, etc.) que se pueden compartir por WhatsApp desde el CRM.
+// Se excluyen ejecutables/scripts: WhatsApp los reenvía tal cual a un contacto real,
+// así que subir uno acá equivale a distribuirlo desde el número de la empresa.
+const EXTENSIONES_BLOQUEADAS = /\.(exe|bat|cmd|sh|msi|scr|com|jar|apk|js|vbs|ps1|dll)$/i;
+
 export const uploadArchivo = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (EXTENSIONES_BLOQUEADAS.test(file.originalname)) {
+      return cb(new Error('Tipo de archivo no permitido'));
+    }
+    cb(null, true);
+  },
 }).single('archivo');
 
 // Si respondimos (saliente) y el cliente no volvió a escribir en este lapso,
