@@ -247,28 +247,35 @@ async function procesarMensaje(canalId, empresaId, msg, sock) {
 
   const conversacionId = conversacion.rows[0].conversaciones_id;
 
-  // ON CONFLICT DO NOTHING: red de seguridad ante una carrera real (dos procesos
-  // procesando el mismo mensaje casi al mismo tiempo) — el chequeo de arriba
-  // (SELECT) no es atómico por sí solo. Si perdemos la carrera, no hay fila que
-  // devolver: hay que cortar acá y no duplicar el mensaje ni la respuesta de la IA.
-  const nuevoMensaje = await query(
-    `INSERT INTO mensajes
-     (conversacion_id, empresa_id, plataforma_mensaje_id, direccion, contenido, tipo, media_url, estado, fecha_hora, creado_en)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
-     ON CONFLICT (empresa_id, plataforma_mensaje_id) WHERE plataforma_mensaje_id IS NOT NULL DO NOTHING
-     RETURNING *`,
-    [
-      conversacionId,
-      empresaId,
-      msg.key.id,
-      esSaliente ? 'saliente' : 'entrante',
-      texto,
-      tipo,
-      mediaUrl,
-      esSaliente ? 'sent' : 'recibido',
-      new Date((Number(msg.messageTimestamp) || Math.floor(Date.now() / 1000)) * 1000),
-    ]
-  );
+  // Sin ON CONFLICT a propósito: exige que exista el índice único, y si su creación
+  // falla (p. ej. por duplicados viejos) todos los INSERT entrantes fallan. Si el
+  // índice sí existe y perdemos una carrera, llega 23505 y cortamos sin duplicar.
+  let nuevoMensaje;
+  try {
+    nuevoMensaje = await query(
+      `INSERT INTO mensajes
+       (conversacion_id, empresa_id, plataforma_mensaje_id, direccion, contenido, tipo, media_url, estado, fecha_hora, creado_en)
+       SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, NOW()
+       WHERE NOT EXISTS (
+         SELECT 1 FROM mensajes WHERE empresa_id = $2 AND plataforma_mensaje_id = $3
+       )
+       RETURNING *`,
+      [
+        conversacionId,
+        empresaId,
+        msg.key.id,
+        esSaliente ? 'saliente' : 'entrante',
+        texto,
+        tipo,
+        mediaUrl,
+        esSaliente ? 'sent' : 'recibido',
+        new Date((Number(msg.messageTimestamp) || Math.floor(Date.now() / 1000)) * 1000),
+      ]
+    );
+  } catch (err) {
+    if (err.code === '23505') return;
+    throw err;
+  }
 
   if (nuevoMensaje.rows.length === 0) return;
 
